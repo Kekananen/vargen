@@ -1657,8 +1657,6 @@ get_gtex_variants <- function(tissue_files, omim_genes, gtex_lookup_file,
   return(unique(gtex_variants_final))
 }
 
-
-
 # ---- vargen Pipeline ----
 
 #' @title Download the files needed to run \code{\link{vargen_pipeline}}
@@ -1672,9 +1670,12 @@ get_gtex_variants <- function(tissue_files, omim_genes, gtex_lookup_file,
 #'   \item enhancer_tss_associations.bed
 #' }
 #'
+#'
 #' @param install_dir the path to the installation folder (default = "./")
 #' @param gtex_version the version of gtex to download, only "v7" and "v8" are
 #' supported (default = "v8")
+#' @param timeout the timeout set in options(), reading/downloading files online
+#' might fail with the default timeout of 60 seconds.
 #' @param verbose if TRUE will print progress messages (default = FALSE)
 #'
 #' @return nothing, download files in "install_dir".
@@ -1682,8 +1683,11 @@ get_gtex_variants <- function(tissue_files, omim_genes, gtex_lookup_file,
 #' @examples
 #' vargen_install("./", verbose = TRUE)
 #' @export
-vargen_install <- function(install_dir = "./", gtex_version = "v8", verbose = FALSE){
-  
+vargen_install <- function(install_dir = "./", gtex_version = "v8", timeout = 10000, verbose = FALSE){
+  original_timeout <- getOption("timeout")
+  options(timeout = timeout)
+  if(verbose) print(paste0("Setting the timeout to '", timeout, "'"))
+
   if (!file.exists(install_dir)){
     if(verbose) print(paste0("Creating folder '", install_dir, "'"))
     dir.create(install_dir)
@@ -1707,6 +1711,7 @@ vargen_install <- function(install_dir = "./", gtex_version = "v8", verbose = FA
   # download gwas file:
   if(verbose) print("Downloading the gwas catalog file from ebi")
   gwasurl <- "https://www.ebi.ac.uk/gwas/api/search/downloads/full"
+  #gwasurl <- "ftp://ftp.ebi.ac.uk/pub/databases/gwas/releases/latest/gwas-catalog-associations.tsv"
   # gwasheaders contains the http header from the URL
   gwasheaders <- curlGetHeaders(url = gwasurl, redirect = TRUE, verify = TRUE)
   # From the header, we can extract the line where the filename is
@@ -1761,6 +1766,9 @@ vargen_install <- function(install_dir = "./", gtex_version = "v8", verbose = FA
   if(verbose) print("Downloading EWAS file.")
   utils::download.file("http://www.ewascatalog.org/static/docs/EWAS_Catalog_03-07-2019.txt.gz",
                        destfile = paste0(install_dir, "/EWAS_Catalog_03-07-2019.txt.gz"))
+
+  options(timeout = original_timeout)
+  if(verbose) print(paste0("Resetting the timeout to previous value '", original_timeout, "'"))
 }
 
 
@@ -1836,7 +1844,7 @@ vargen_install <- function(install_dir = "./", gtex_version = "v8", verbose = FA
 vargen_pipeline <- function(vargen_dir, omim_morbid_ids, fantom_corr = 0.25,
                             outdir = "./", gtex_tissues, gwas_traits,
                             gene_mart, snp_mart, verbose = FALSE) {
-  
+
   if(missing(omim_morbid_ids)){
     stop("Please provide at least one OMIM morbid id. Stopping now.")
   }
@@ -1862,7 +1870,7 @@ vargen_pipeline <- function(vargen_dir, omim_morbid_ids, fantom_corr = 0.25,
     warning("Snp mart not provided (or not a valid Mart object).",
             "We used one from connect_to_snp_ensembl() instead.")
   }
-  
+
   # no gwas traits = no need to generate the gwas_cat object
   if(!missing(gwas_traits)){
     if(verbose) print("Building the gwascat object...")
@@ -1897,12 +1905,11 @@ vargen_pipeline <- function(vargen_dir, omim_morbid_ids, fantom_corr = 0.25,
   
   omim_all_genes <- data.frame()
   master_variants <- data.frame()
-  
+
   for(omim_morbid in omim_morbid_ids){
     if(verbose) print(paste0("Getting genes for OMIM: ", omim_morbid))
     # First: get all the genes linked to the different omim ids:
     omim_genes <- get_omim_genes(omim_morbid, gene_mart)
-    
     if(nrow(omim_genes) == 0){
       if(verbose) print(paste0("warning: no genes found for omim id: ", omim_morbid))
     } else {
@@ -1918,7 +1925,7 @@ vargen_pipeline <- function(vargen_dir, omim_morbid_ids, fantom_corr = 0.25,
     
     if(length(genes_variants) != 0) master_variants <- rbind(master_variants,
                                                              genes_variants)
-    
+
     # We get the variants on the enhancers of the genes:
     fantom_variants <- get_fantom5_variants(fantom_df = fantom_df,
                                             omim_genes = omim_all_genes,
@@ -1931,12 +1938,12 @@ vargen_pipeline <- function(vargen_dir, omim_morbid_ids, fantom_corr = 0.25,
     
     # master_variants$trait <- omim_morbid
     # print(head(master_variants))
-    
+
     if(verbose) print(paste0("Writing the list of genes to: ", outdir, "/genes_info.tsv"))
     # We write the list of genes in a file.
     utils::write.table(x = omim_all_genes, quote = FALSE, sep = "\t", row.names = FALSE,
                        file = paste0(outdir, "/genes_info.tsv"))
-    
+
     #_____________________________________________________________________________
     # Getting variants associated with change of expression in GTEx (need tissues as input)
     #_____________________________________________________________________________
@@ -2056,7 +2063,7 @@ vargen_pipeline <- function(vargen_dir, omim_morbid_ids, fantom_corr = 0.25,
 vargen_custom <- function(vargen_dir, gene_ids, fantom_corr = 0.25, outdir = "./",
                           gtex_tissues, gwas_traits, gene_mart, snp_mart,
                           verbose = FALSE) {
-  
+
   if (!dir.exists(outdir)){
     if(verbose) print(paste0("Creating folder '", outdir, "'"))
     dir.create(outdir)
@@ -2103,7 +2110,7 @@ vargen_custom <- function(vargen_dir, gene_ids, fantom_corr = 0.25, outdir = "./
   if(!file.exists(gtex_lookup_file)){
     stop(paste0("Can not read: ", gtex_lookup_file, ", stopping now."))
   }
-  
+
   master_variants <- data.frame()
   #_____________________________________________________________________________
   # Getting variants from genes related to OMIM disease
@@ -2129,7 +2136,7 @@ vargen_custom <- function(vargen_dir, gene_ids, fantom_corr = 0.25, outdir = "./
     master_variants <- get_genes_variants(genes = genes_info, verbose = verbose)
     # Replacing "omim" by "gene"
     master_variants$source <- "gene"
-    
+
     #_____________________________________________________________________________
     # Getting variants on the enhancers of the OMIM genes, using FANTOM5
     #_____________________________________________________________________________
@@ -2141,7 +2148,6 @@ vargen_custom <- function(vargen_dir, gene_ids, fantom_corr = 0.25, outdir = "./
     
     if(length(fantom_variants) != 0) master_variants <- rbind(master_variants,
                                                               fantom_variants)
-    
     #_____________________________________________________________________________
     # Getting variants associated with change of expression in GTEx (need tissues as input)
     #_____________________________________________________________________________
@@ -2152,20 +2158,19 @@ vargen_custom <- function(vargen_dir, gene_ids, fantom_corr = 0.25, outdir = "./
                                          gtex_lookup_file = gtex_lookup_file,
                                          snp_mart = snp_mart,
                                          verbose = verbose)
-      
       if(length(gtex_variants) != 0) master_variants <- rbind(master_variants,
                                                               gtex_variants)
-      
+
     } else{
       print("No values for 'gtex_tissues', skipping GTEx step...")
     }
-    
+
     master_variants$trait <- ""
-    
+
   } else {
     print(paste0("No genes found for: ", paste(gene_ids, collapse = ", ")))
   }
-  
+
   #_____________________________________________________________________________
   # Getting variants associated to the disease in the gwas catalog
   #_____________________________________________________________________________
@@ -2182,10 +2187,189 @@ vargen_custom <- function(vargen_dir, gene_ids, fantom_corr = 0.25, outdir = "./
   # writing the variants data.frame to a file
   if(verbose) print(paste0("Writing the variants to ",
                            paste0(outdir, "/custom_vargen_variants.tsv")))
-  
   utils::write.table(x = unique(master_variants), append = FALSE, quote = FALSE,
                      sep = "\t", row.names = FALSE,
                      file = paste0(outdir, "/custom_vargen_variants.tsv"))
-  
   return(unique(master_variants))
+}
+
+
+#' @title Generate a plot of the variants on the OMIM genes
+#' @description The plot contains 4 tracks:
+#' \itemize{
+#'   \item  The chromosome, with a red marker on the gene location
+#'   \item  The ensembl transcripts
+#'   \item  The variant consequences, grouped by type (eg: INTRONIC, STOP LOST etc...),
+#' each green bar represent a variant
+#'   \item  The cadd phred score, each dot represent a variant
+#' }
+#'
+#' @param annotated_snps a data.frame from the merging of the outputs of
+#' \code{\link{vargen_pipeline}} and \code{\link{annotate_variants}}
+#' @param outdir the directory that will contain the plots
+#' @param rsid_highlight optional, a vector of rsids, which will be plotted in red
+#' on the cadd track.
+#' @param device only "pdf" and "png" are supported now.
+#' @param verbose if TRUE, will display progress messages
+#' @param gene_mart optional, a connection to ensembl gene mart, can be created
+#' using \code{\link{connect_to_gene_ensembl}}. If missing this function will be
+#' used to create the connection.
+#'
+#' @return nothing, create the plots in "outdir". One file per gene, the name format
+#' is <hgnc_symbol>_<ensembl_id>_GVIZ
+#'
+#' @examples
+#' vargen_install("./vargen_data/")
+#'
+#' # Simple query
+#' gene_mart <- connect_to_gene_ensembl()
+#' DM1_simple <- vargen_pipeline(vargen_dir = "./vargen_data/", omim_morbid_ids = "222100",
+#'                               fantom_corr = 0.25, outdir = "./", verbose = TRUE)
+#'
+#' vargen_visualisation(annotated_snps = DM1_simple, verbose = TRUE,
+#'                      outdir = "./DM1_gviz", device = "png",
+#'                      gene_mart = gene_mart)
+#' @export
+vargen_visualisation <- function(annotated_snps, outdir = "./", rsid_highlight,
+                                 device = "pdf", verbose = FALSE, gene_mart){
+  if(device != "png" && device != "pdf"){
+    stop("Please specify device as png or pdf")
+  }
+
+  if (!file.exists(outdir)){
+    if(verbose) print(paste0("Creating folder '", outdir, "'"))
+    dir.create(outdir)
+  }
+
+  if(missing(gene_mart) || class(gene_mart) != 'Mart'){
+    gene_mart <- connect_to_gene_ensembl()
+    warning("Gene mart not provided (or not a valid Mart object).",
+            "We used one from connect_to_gene_ensembl() instead.")
+  }
+
+  bckg_col <- "#D95F02"
+
+  # Get genes position for omim genes (not gwas / gtex genes as we currently limit
+  # the plot to start and stop of the gene, and gwas snps often lies outside these coordinates)
+  omim_genes <- annotated_snps[annotated_snps$source == "omim","ensembl_gene_id"]
+  genes_list <- biomaRt::getBM(attributes = c("ensembl_gene_id", "chromosome_name",
+                                              "start_position", "end_position",
+                                              "hgnc_symbol"),
+                               filters = c("ensembl_gene_id"),
+                               values = unique(omim_genes),
+                               mart = gene_mart, uniqueRows = TRUE)
+
+  # UCSC chr format
+  genes_list$chromosome_name <- paste0("chr", genes_list$chromosome_name)
+
+  # From get_genes_from_omim output:
+  genes <- genes_list[,2:4]
+  colnames(genes) <- c("chromosome", "start", "end")
+
+  regions <- GenomicRanges::makeGRangesFromDataFrame(genes)
+  GenomeInfoDb::genome(regions) <- "hg38"
+  GenomeInfoDb::seqlevelsStyle(regions) <- "UCSC"
+
+  for(i in 1:nrow(genes_list)){
+    if(verbose) print(genes_list[i,]$hgnc_symbol)
+
+    # Subselect the snps on the gene locus only:
+    track_variants <- subset(annotated_snps, annotated_snps$chr == genes_list[i,]$chromosome_name)
+    track_variants <- subset(track_variants,track_variants$pos >= genes_list[i,]$start_position)
+    track_variants <- subset(track_variants,track_variants$pos <= genes_list[i,]$end_position)
+    track_variants <- track_variants[!(is.na(track_variants$consequence)),]
+    track_variants <- track_variants[!(track_variants$consequence == ""),]
+    track_variants$chr <- as.vector(track_variants$chr)
+
+    if(nrow(track_variants) != 0){
+      # Name of consequences are displayed on the left of the track, so we leave 10%
+      # of the gene length as a margin on the left to avoid cutting names.
+      gene_length <- genes_list[i,]$end_position - genes_list[i,]$start_position
+      start_plot <- min(track_variants$pos) - (15/100) * gene_length
+      end_plot <- max(track_variants$pos) + 10
+
+      # Track of variants consequences
+      conseq_track <- Gviz::AnnotationTrack(background.title = bckg_col,
+                                            start = track_variants$pos,
+                                            end = track_variants$pos,
+                                            chromosome = unique(track_variants$chr),
+                                            group = track_variants$consequence,
+                                            genome = "hg38", col = "#1B9E77",
+                                            fill = "#1B9E77", fontsize = 18,
+                                            name = "Variant Consequence")
+
+      # Need to have the variants in position order for the data track
+      cadd_track_variants <- track_variants[!(is.na(track_variants$cadd_phred)),]
+      cadd_track_variants <- cadd_track_variants[order(cadd_track_variants$pos),]
+
+      if(nrow(cadd_track_variants) != 0){
+        # Track for cadd phrad score, width of 1 because of SNP
+        cadd_track <- Gviz::DataTrack(background.title = bckg_col,
+                                      data = cadd_track_variants$cadd_phred,
+                                      start = cadd_track_variants$pos,
+                                      width = 1, fontsize = 16,
+                                      chromosome = unique(cadd_track_variants$chr),
+                                      genome = "hg38", name = "CADD Phred score",
+                                      ylim = c(0,40), group = cadd_track_variants$group)
+
+        # Overlaying a second data track to highlight some snps:
+        # Maybe it would be better to use the "group" paramater of the
+        # DataTrack rather than overlapping data tracks.
+        cadd_highlights <- data.frame()
+        if(!missing(rsid_highlight)){
+          cadd_highlights <- cadd_track_variants[cadd_track_variants$rsid %in% rsid_highlight,]
+          if(nrow(cadd_highlights) != 0){
+            cadd_highlight_track <- Gviz::DataTrack(background.title = bckg_col,
+                                                    data = cadd_highlights$cadd_phred,
+                                                    start = cadd_highlights$pos,
+                                                    width = 1, fontsize = 16,
+                                                    group = cadd_highlights$rsid,
+                                                    chromosome = unique(cadd_highlights$chr),
+                                                    genome = "hg38", name = "CADD Phred score",
+                                                    col = "red", ylim = c(0,40))
+          }
+        }
+      }
+
+      gene_track <- Gviz::UcscTrack(background.title = bckg_col, fontsize = 18,
+                                    genome = "hg38", track = "knownGene",
+                                    chromosome = genes_list[i,]$chromosome_name,
+                                    from = start_plot, to = end_plot,
+                                    trackType = "GeneRegionTrack",
+                                    rstarts = "exonStarts", rends = "exonEnds",
+                                    gene = "name", symbol = "name", transcript = "name",
+                                    strand = "strand", fill = "#8282d2",
+                                    transcriptAnnotation = "transcript",
+                                    name = genes_list[i,"hgnc_symbol"])
+
+      itrack <- Gviz::IdeogramTrack(genome="hg38", chromosome = genes_list[i,]$chromosome_name)
+      axis_track <- Gviz::GenomeAxisTrack()
+
+      plot_name <- paste0(outdir,"/",genes_list[i,"hgnc_symbol"], "_", genes_list[i,"ensembl_gene_id"], "_GVIZ")
+      if(device == "pdf") grDevices::pdf(paste0(plot_name,".pdf"), width = 15, height = 10)
+      if(device == "png") grDevices::png(paste0(plot_name,".png"), width = 15, height = 10, units = "in", res = 300)
+
+      tracklist <- list(itrack, axis_track, gene_track, conseq_track)
+
+      # If some variants are to be highlighted, we combine the cadd track and the
+      # highlight track into one "overlay track". Else, if we have cadd scores
+      # we just plot the "cadd_track" on its own.
+      if(nrow(cadd_highlights) != 0){
+        highlight_track <- Gviz::OverlayTrack(background.title = bckg_col,
+                                              trackList = list(cadd_track,
+                                                               cadd_highlight_track))
+        tracklist <- append(tracklist, highlight_track)
+      } else {
+        if(nrow(cadd_track_variants) != 0){
+          tracklist <- append(tracklist, cadd_track)
+        }
+      }
+
+      Gviz::plotTracks(tracklist,
+                       from = start_plot,
+                       to = end_plot,
+                       groupAnnotation = "group")
+      grDevices::dev.off()
+    }
+  }
 }
